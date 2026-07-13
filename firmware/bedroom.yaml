@@ -31,6 +31,8 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
+  power_save_mode: none
+
   ap:
     ssid: "${friendly_name} fallback"
     password: "12345678"
