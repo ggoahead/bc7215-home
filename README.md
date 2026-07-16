@@ -52,6 +52,6 @@ SoftwareSerial RX=D1(5)/TX=D0(16), LED=D4(2), pair button=D3(0), DHT22=D6(12).
 ## Pairing
 
 Long-press the FLASH button (GPIO0, ≥2s) to (re-)enter pairing. Point the
-real remote at the receiver, set it to Cooling/25°C, press any button. LED
+real remote at the receiver, set it to Cooling/25°C, press the fan speed button. LED
 blinks fast during pairing, goes dark on success. Pairing data persists in
 flash (ESPHome preferences) across reboots and OTA updates.
