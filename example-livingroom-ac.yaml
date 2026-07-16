@@ -1,5 +1,6 @@
 esphome:
   name: bc7215-ac-livingroom
+  friendly_name: 客厅空调
   platformio_options:
     lib_deps:
       - https://github.com/bitcode-tech/bc7215ac.git#v7.2.0
@@ -24,21 +25,38 @@ external_components:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  min_auth_mode: WPA2
+  power_save_mode: none
+
+logger:
 
 api:
+
 ota:
-  platform: esphome
+  - platform: esphome
 
 sensor:
   - platform: dht
     pin: GPIO12
-    model: DHT22
+    model: AM2302
     temperature:
       name: "Living Room Temperature"
       id: dht_temp
+      accuracy_decimals: 1
+      filters:
+        #- offset: -2.3 修正板载热源偏差
+        - or: # 动态节流与心跳机制
+            - delta: 0.2 # 温度绝对值波动 >= 0.2°C 时才上报更新
+            - heartbeat: 300s
     humidity:
       name: "Living Room Humidity"
-    update_interval: 30s
+      accuracy_decimals: 0
+      filters:
+        #- offset: 5.0   # 修正板载热源导致的系统偏差
+        - or:
+            - delta: 2.0 # 湿度绝对值波动 >= 2% 时才上报更新
+            - heartbeat: 300s
+    update_interval: 60s
 
 climate:
   - platform: bc7215_ac
