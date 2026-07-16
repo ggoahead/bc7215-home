@@ -3,17 +3,6 @@
 ESPHome `climate` external_component wrapping [bitcode-tech/bc7215ac](https://github.com/bitcode-tech/bc7215ac)
 (Arduino/Stream-based library) for BC7215A universal IR AC control on ESP8266.
 
-## Why not timj-code/bc7215_ac_esphome
-
-That project is a genuine ESPHome climate component, but it's built on the
-ESP-IDF example from bc7215_ac_lib and is ESP32-only (confirmed by the author:
-"not a port of the Arduino code, but based on the official ESP-IDF example").
-ESP-IDF doesn't target ESP8266 at all (different SoC/toolchain), so there's no
-incremental path from that project to this hardware. It's also a ~5-week-old,
-single-maintainer, largely AI-generated project with an already-reported
-"unavailable/slow" issue — not something to build a "few years, no touch"
-device on regardless of platform.
-
 This component instead wraps bitcode-tech's own Arduino library, which has a
 Stream-based interface and an official ESP8266 + SoftwareSerial example
 (`ESP8266_AC_MQTT_HA.ino`). We keep the library and its wiring/pairing/EEPROM
