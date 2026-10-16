@@ -91,8 +91,12 @@ class BC7215ACClimate : public climate::Climate, public Component {
   BC7215AC *ac_{nullptr};
   ESPPreferenceObject pref_;
 
+  static constexpr unsigned PROBE_ATTEMPTS = 10;
+  static constexpr uint32_t NOT_CONNECTED_REPROBE_MS = 10000;
+
   OpState state_{OpState::STARTUP};
   uint8_t startup_step_{0};
+  unsigned probe_attempts_{0};
   uint32_t state_time_{0};
   uint32_t led_time_{0};
 

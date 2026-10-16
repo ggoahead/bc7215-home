@@ -149,16 +149,9 @@ void BC7215ACClimate::setup() {
 
   this->pref_ = global_preferences->make_preference<BC7215ACSavedConfig>(fnv1_hash("bc7215_ac_config"), true);  // in_flash: ESP8266 default is RTC RAM, lost on power cut
 
-  // Presence probe: wake, then request shutdown and see if the chip acks by
-  // going busy. One-time ~100ms blocking delay at boot only, never in loop().
-  this->bc7215_->setRx();
-  delay(50);
-  this->bc7215_->setTx();
-  delay(50);
-  this->bc7215_->setShutDown();
-
   this->state_ = OpState::STARTUP;
   this->startup_step_ = 0;
+  this->probe_attempts_ = 0;
   this->state_time_ = millis();
 
   if (this->temperature_sensor_ != nullptr) {
@@ -205,20 +198,52 @@ void BC7215ACClimate::loop() {
   this->update_pair_button_();
 }
 
+// Presence probe: wake, then request shutdown and wait for the chip's ack.
+// Retried because on a cold power-up the BC7215A is still booting when the
+// ESP8266 first probes it and silently drops the command.
 void BC7215ACClimate::handle_startup_() {
+  uint32_t now = millis();
   switch (this->startup_step_) {
     case 0:
-      if (!this->bc7215_->isBusy()) {
-        this->bc7215_->setRx();
+      this->bc7215_->setRx();
+      this->state_time_ = now;
+      this->startup_step_ = 1;
+      break;
+    case 1:
+      if (now - this->state_time_ >= 50) {
         this->bc7215_->setTx();
-        this->startup_step_ = 1;
-      } else if (millis() - this->state_time_ > 1000) {
-        ESP_LOGE(TAG, "BC7215A not detected, check wiring (MOD/BUSY/RX/TX)");
-        this->state_ = OpState::NOT_CONNECTED;
-        this->led_time_ = millis();
+        this->state_time_ = now;
+        this->startup_step_ = 2;
       }
       break;
-    case 1: {
+    case 2:
+      if (now - this->state_time_ >= 50) {
+        this->bc7215_->setShutDown();
+        this->state_time_ = now;
+        this->startup_step_ = 3;
+      }
+      break;
+    case 3:
+      if (!this->bc7215_->isBusy()) {
+        if (this->probe_attempts_ > 0)
+          ESP_LOGI(TAG, "BC7215A responded after %u retries", this->probe_attempts_);
+        this->bc7215_->setRx();
+        this->bc7215_->setTx();
+        this->startup_step_ = 4;
+      } else if (now - this->state_time_ > 1000) {
+        if (++this->probe_attempts_ < PROBE_ATTEMPTS) {
+          ESP_LOGD(TAG, "BC7215A not responding yet, retrying (%u/%u)", this->probe_attempts_, PROBE_ATTEMPTS);
+          this->startup_step_ = 0;
+        } else {
+          ESP_LOGE(TAG, "BC7215A not detected, check wiring (MOD/BUSY/RX/TX); re-probing every %us",
+                   (unsigned) (NOT_CONNECTED_REPROBE_MS / 1000));
+          this->state_ = OpState::NOT_CONNECTED;
+          this->led_time_ = now;
+          this->state_time_ = now;
+        }
+      }
+      break;
+    case 4: {
       if (this->load_config_()) {
         ESP_LOGI(TAG, "Restored paired AC configuration from flash");
         this->mode = climate::CLIMATE_MODE_COOL;
@@ -337,6 +362,12 @@ void BC7215ACClimate::handle_not_connected_() {
   if (now - this->led_time_ >= 500) {
     this->led_time_ = now;
     this->led_toggle_();
+  }
+  if (now - this->state_time_ >= NOT_CONNECTED_REPROBE_MS) {
+    this->led_off_();
+    this->state_ = OpState::STARTUP;
+    this->startup_step_ = 0;
+    this->probe_attempts_ = PROBE_ATTEMPTS - 1;  // one probe per cycle, then back here
   }
 }
 
