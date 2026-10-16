@@ -147,7 +147,7 @@ void BC7215ACClimate::setup() {
   this->ac_ = new BC7215AC(*this->bc7215_);
   this->ac_->setCelsius();  // hardcoded: no Fahrenheit use case for this deployment
 
-  this->pref_ = global_preferences->make_preference<BC7215ACSavedConfig>(fnv1_hash("bc7215_ac_config"));
+  this->pref_ = global_preferences->make_preference<BC7215ACSavedConfig>(fnv1_hash("bc7215_ac_config"), true);  // in_flash: ESP8266 default is RTC RAM, lost on power cut
 
   // Presence probe: wake, then request shutdown and see if the chip acks by
   // going busy. One-time ~100ms blocking delay at boot only, never in loop().
@@ -455,7 +455,7 @@ void BC7215ACClimate::save_config_() {
   // EEPROM examples.
   memcpy(&cfg.ir_data, this->ac_->getDataPkt(), sizeof(bc7215DataMaxPkt_t));
 
-  if (!this->pref_.save(&cfg)) {
+  if (!this->pref_.save(&cfg) || !global_preferences->sync()) {
     ESP_LOGW(TAG, "Failed to save AC pairing to flash");
   }
 }
