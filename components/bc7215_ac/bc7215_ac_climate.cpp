@@ -245,8 +245,9 @@ void BC7215ACClimate::handle_startup_() {
       break;
     case 4: {
       if (this->load_config_()) {
-        ESP_LOGI(TAG, "Restored paired AC configuration from flash");
-        this->mode = climate::CLIMATE_MODE_COOL;
+        ESP_LOGI(TAG, "Restored paired AC configuration from flash (protocol match #%d)", this->match_cnt_);
+        // Real AC state is unknown after a reboot; after a power cut the AC is off too.
+        this->mode = climate::CLIMATE_MODE_OFF;
         this->target_temperature = 25;
         this->fan_mode = climate::CLIMATE_FAN_AUTO;
         this->update_action_();
@@ -267,7 +268,16 @@ void BC7215ACClimate::enter_pairing_() {
   this->state_ = OpState::PAIRING;
   this->led_time_ = millis();
   this->ac_->startCapture();
-  ESP_LOGI(TAG, "Pairing: set remote to Cooling/25C, aim it at the receiver and press any button");
+  ESP_LOGI(TAG, "Pairing: with the AC on in Cooling/25C, aim the remote at the receiver and press Temp or Mode");
+}
+
+void BC7215ACClimate::start_pairing() {
+  if (this->state_ != OpState::WORKING && this->state_ != OpState::PAIRING) {
+    ESP_LOGW(TAG, "Ignoring pairing request: busy or BC7215A not connected");
+    return;
+  }
+  this->ac_->stopCapture();
+  this->enter_pairing_();
 }
 
 void BC7215ACClimate::handle_pairing_() {
@@ -280,7 +290,17 @@ void BC7215ACClimate::handle_pairing_() {
   if (this->ac_->signalCaptured()) {
     this->ac_->stopCapture();
     if (this->ac_->init()) {
-      ESP_LOGI(TAG, "Pairing succeeded");
+      // For protocols without a dedicated ON frame, on() replays this sample,
+      // so a sample taken with the remote in OFF state would make power-on
+      // send "off" again.
+      int t = -1, m = -1, f = -1, p = -1;
+      if (this->ac_->parse(t, m, f, p) && p == 0) {
+        ESP_LOGW(TAG, "Pairing rejected: captured an OFF frame. Turn the AC on with the remote "
+                      "(Cooling/25C), then press Temp or Mode (not Power)");
+        this->ac_->startCapture();
+        return;
+      }
+      ESP_LOGI(TAG, "Pairing succeeded (T=%d M=%d F=%d P=%d)", t, m, f, p);
       this->match_cnt_ = 0;
       this->save_config_();
       this->mode = climate::CLIMATE_MODE_COOL;
@@ -517,6 +537,37 @@ bool BC7215ACClimate::load_config_() {
     }
   }
   return true;
+}
+
+// One captured frame can match several protocol variants that differ in fields
+// the sample didn't exercise (e.g. power bit). Step to the next candidate,
+// wrapping back to the first one when the list runs out.
+void BC7215ACClimate::try_next_protocol() {
+  if (this->state_ != OpState::WORKING || this->ac_ == nullptr || !this->ac_->initOK) {
+    ESP_LOGW(TAG, "Ignoring next-protocol request: not paired or busy");
+    return;
+  }
+  BC7215ACSavedConfig cfg;
+  if (!this->pref_.load(&cfg)) {
+    ESP_LOGW(TAG, "Ignoring next-protocol request: no saved pairing");
+    return;
+  }
+
+  this->ac_->stopCapture();
+  if (this->ac_->matchNext()) {
+    this->match_cnt_++;
+    ESP_LOGI(TAG, "Switched to protocol match #%d", this->match_cnt_);
+  } else {
+    this->ac_->init(cfg.ir_data, cfg.ir_format);
+    this->match_cnt_ = 0;
+    ESP_LOGI(TAG, "No more protocol matches, back to match #0");
+  }
+  this->ac_->startCapture();
+
+  cfg.match_cnt = this->match_cnt_;
+  if (!this->pref_.save(&cfg) || !global_preferences->sync()) {
+    ESP_LOGW(TAG, "Failed to save protocol match to flash");
+  }
 }
 
 }  // namespace bc7215_ac

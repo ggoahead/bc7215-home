@@ -58,8 +58,23 @@ sensor:
             - heartbeat: 300s
     update_interval: 60s
 
+button:
+  # Cycles through protocol variants matching the paired remote; press when
+  # some commands (e.g. power on) don't work, then retest. Saved to flash.
+  - platform: template
+    name: "Next IR Protocol"
+    entity_category: config
+    on_press:
+      - lambda: id(ac).try_next_protocol();
+  - platform: template
+    name: "Pair Remote"
+    entity_category: config
+    on_press:
+      - lambda: id(ac).start_pairing();
+
 climate:
   - platform: bc7215_ac
+    id: ac
     name: "Living Room AC"
     mod_pin: GPIO14
     busy_pin: GPIO4

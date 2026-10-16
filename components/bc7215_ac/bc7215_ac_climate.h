@@ -48,6 +48,9 @@ class BC7215ACClimate : public climate::Climate, public Component {
   climate::ClimateTraits traits() override;
   void control(const climate::ClimateCall &call) override;
 
+  void try_next_protocol();
+  void start_pairing();
+
  protected:
   // state machine
   void enter_pairing_();
