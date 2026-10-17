@@ -9,11 +9,15 @@ author). This component targets ESP8266 + Arduino framework + SoftwareSerial,
 matching bitcode-tech/bc7215ac's own ESP8266 examples.
 """
 
+from pathlib import Path
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
 from esphome.components import climate, sensor
 from esphome.const import CONF_ID, CONF_SENSOR
+from esphome.core import CORE
+from esphome.helpers import write_file_if_changed
 
 CODEOWNERS = ["@ggoahead"]
 
@@ -61,3 +65,12 @@ async def to_code(config):
     if CONF_SENSOR in config:
         sens = await cg.get_variable(config[CONF_SENSOR])
         cg.add(var.set_temperature_sensor(sens))
+
+    # The vendor library's ~31 KB of const tables would otherwise sit in DRAM and
+    # starve the device of heap (API/OTA connections get reset). See the script.
+    script = Path(__file__).parent / "rodata_to_flash.py.script"
+    write_file_if_changed(
+        CORE.relative_build_path("bc7215_rodata_to_flash.py"), script.read_text()
+    )
+    cg.add_platformio_option("extra_scripts", ["pre:bc7215_rodata_to_flash.py"])
+    cg.add_build_flag("-DNON32XFER_HANDLER")

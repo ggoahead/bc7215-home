@@ -1,0 +1,44 @@
+# PlatformIO "pre:" extra script, copied into the ESPHome build dir by climate.py.
+#
+# The ESP8266 keeps .rodata in DRAM. bitcode-tech's bc7215_ac_lib.c carries ~31 KB
+# of const protocol tables, which leaves the device with only 5-7 KB of free heap
+# (dipping below 1 KB) once Wi-Fi is up, so API and OTA TCP connections get reset.
+#
+# Fix, applied to that one file only:
+#  - compile it with -mforce-l32, so byte/half-word loads become aligned 32-bit
+#    loads, which work on memory-mapped flash;
+#  - rename its .rodata* sections to .irom0.text.*, which the core linker script
+#    places in flash.
+# Other code that reads those tables through pointers (e.g. memcpy) is covered by
+# the core's non-32-bit-access exception handler (-DNON32XFER_HANDLER, set in
+# climate.py).
+
+import subprocess
+
+Import("env")  # noqa: F821  (SCons)
+
+LIB_SOURCE = "bc7215_ac_lib.c"
+SECTION_PREFIX = ".irom0.text.bc7215"
+
+
+def _move_rodata_to_flash(target, source, env):
+    obj = str(source[0])
+    objcopy = env.subst("$OBJCOPY")
+    objdump = objcopy[: -len("objcopy")] + "objdump"
+    headers = subprocess.run([objdump, "-h", obj], check=True, capture_output=True, text=True).stdout
+    sections = sorted({f for line in headers.splitlines() for f in line.split()[1:2] if f.startswith(".rodata")})
+    args = [objcopy]
+    for s in sections:
+        args += ["--rename-section", f"{s}={SECTION_PREFIX}{s}"]
+    subprocess.run(args + [obj, str(target[0])], check=True)
+    print(f"bc7215_ac: moved {len(sections)} .rodata sections of {LIB_SOURCE} to flash")
+    return 0
+
+
+def _build_lib_source(env, node):
+    obj = env.Object(node, CCFLAGS=env["CCFLAGS"] + ["-mforce-l32"])
+    # Keep the ".c.o" suffix: the linker script only sends "*.c.o" code to flash.
+    return env.Command(str(obj[0]).replace(".c.o", ".flash.c.o"), obj, _move_rodata_to_flash)
+
+
+env.AddBuildMiddleware(_build_lib_source, "*" + LIB_SOURCE)  # noqa: F821
