@@ -330,7 +330,15 @@ void BC7215ACClimate::handle_working_() {
   this->led_on_();
 
   int t = -1, m = -1, f = -1, p = -1;
-  if (this->ac_->parse(t, m, f, p)) {
+  bool parsed = this->ac_->parse(t, m, f, p);
+  // parse() first swaps the library's base frame for the captured one
+  // (bc7215_ac_replace_base), even when the capture doesn't parse, and
+  // on()/off()/setTo() build every later frame from that base. A remote OFF
+  // frame, a partial capture or another remote then breaks all commands until
+  // reboot, so put the paired frame back, same as after a reboot.
+  if (!this->load_config_())
+    ESP_LOGW(TAG, "Failed to restore paired AC frame after capture");
+  if (parsed) {
     bool changed = false;
     bool celsius_ok = (t >= 16 && t <= 30);
     if (celsius_ok) {
@@ -370,7 +378,10 @@ void BC7215ACClimate::enter_sending_() {
 }
 
 void BC7215ACClimate::handle_sending_() {
-  if (!this->ac_->isBusy() || (millis() - this->state_time_ > 3000)) {
+  bool busy = this->ac_->isBusy();
+  if (!busy || (millis() - this->state_time_ > 3000)) {
+    if (busy)
+      ESP_LOGW(TAG, "BC7215A did not confirm IR transmission within 3s");
     this->led_off_();
     this->state_ = OpState::WORKING;
     this->ac_->startCapture();
