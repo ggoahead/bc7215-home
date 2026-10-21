@@ -330,8 +330,8 @@ void BC7215ACClimate::handle_working_() {
   this->led_on_();
 
   int t = -1, m = -1, f = -1, p = -1;
-  bool parsed = this->ac_->parse(t, m, f, p);
-  // parse() first swaps the library's base frame for the captured one
+  bool parsed = this->parse_capture_(t, m, f, p);
+  // Parsing first swaps the library's base frame for the captured one
   // (bc7215_ac_replace_base), even when the capture doesn't parse, and
   // on()/off()/setTo() build every later frame from that base. A remote OFF
   // frame, a partial capture or another remote then breaks all commands until
@@ -369,6 +369,59 @@ void BC7215ACClimate::handle_working_() {
   this->led_off_();
   this->ac_->startCapture();
   // Deliberately no idle heartbeat blink here: normal WORKING state stays dark.
+}
+
+// Same steps as BC7215AC::parse(), which ignores bc7215_ac_replace_base()'s
+// result: when the library rejects a capture, the base is still the paired
+// frame and parse() decodes that, i.e. the pairing settings (Cooling/25C) with
+// power on. Foreign IR (another remote, an iPhone's Face ID / camera) thus
+// turned the AC "on" in HA without the real AC doing anything. Drop the capture
+// if the IR protocol differs from the paired one or the library rejects it.
+bool BC7215ACClimate::parse_capture_(int &t, int &m, int &f, int &p) {
+  BC7215AC *ac = this->ac_;
+  if (!ac->initOK || ac->sampleCount == 0)
+    return false;
+
+  const bc7215FormatPkt_t *base_fmt = bc7215_ac_get_base_fmt();
+  uint8_t sig = ac->sampleFormat[0].signature.bits.sig;
+  if (base_fmt == nullptr || sig != base_fmt->signature.bits.sig) {
+    ESP_LOGD(TAG, "Ignoring capture: IR protocol 0x%02X, paired 0x%02X", sig,
+             base_fmt == nullptr ? 0xFF : base_fmt->signature.bits.sig);
+    return false;
+  }
+
+  bool replaced;
+  if (ac->sampleCount == 1) {
+    replaced = bc7215_ac_replace_base(ac->sampleStatus[0],
+                                      reinterpret_cast<const bc7215DataVarPkt_t *>(&ac->sampleData[0]));
+  } else {
+    bc7215CombinedMsg_t msgs[4];
+    for (int j = 0; j < ac->sampleCount; j++) {
+      if (ac->sampleStatus[j] & 0x40) {  // "REV" bit: data arrives inverted
+        for (int i = 0; i < (ac->sampleData[j].bitLen + 7) / 8; i++)
+          ac->sampleData[j].data[i] = ~ac->sampleData[j].data[i];
+        ac->sampleStatus[j] &= 0xbf;
+      }
+      msgs[j].bitLen = 0;
+      msgs[j].body.msg.fmt = &ac->sampleFormat[j];
+      msgs[j].body.msg.datPkt = reinterpret_cast<const bc7215DataVarPkt_t *>(&ac->sampleData[j]);
+    }
+    replaced = bc7215_ac_replace_base(ac->sampleCount, reinterpret_cast<const bc7215DataVarPkt_t *>(msgs));
+  }
+  if (!replaced) {
+    ESP_LOGD(TAG, "Ignoring capture: rejected by the AC library (%u bits, %u segment(s))",
+             ac->sampleData[0].bitLen, ac->sampleCount);
+    return false;
+  }
+
+  int8_t t8 = -1, m8 = -1, f8 = -1, p8 = -1;
+  bool celsius = ac->isCelsius();
+  bool ok = celsius ? bc7215_ac_parse(&t8, &m8, &f8, &p8) : bc7215_ac_parse_f(&t8, &m8, &f8, &p8);
+  t = t8 + (celsius ? 16 : 60);
+  m = m8;
+  f = f8;
+  p = p8;
+  return ok;
 }
 
 void BC7215ACClimate::enter_sending_() {

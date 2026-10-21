@@ -66,6 +66,7 @@ class BC7215ACClimate : public climate::Climate, public Component {
   // persistence
   void save_config_();
   bool load_config_();
+  bool parse_capture_(int &t, int &m, int &f, int &p);
 
   // LED — normal WORKING state stays dark by design. Only pairing / fault /
   // brief TX activity blink. See project LED policy in the device YAML comments.
